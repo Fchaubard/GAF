@@ -1,0 +1,2 @@
+# GAF
+Gradient Agreement Filtering
