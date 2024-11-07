@@ -1,12 +1,16 @@
+from multiprocessing.managers import Value
+
 import numpy as np
 import jax
 import jax.numpy as jnp
 import optax
-from typing import Any
+from typing import Any, Tuple
 from jax import Array
-from numpy import bool
 
-METHODS = ['sgd', 'adam', 'lamb', 'lars', 'adagrad', 'lbfgs', 'gaf']
+METHODS = ['sgd', 'adam', 'lamb', 'lars', 'adagrad', 'rmsprop']
+
+GAF_METHODS = ['pairwise']
+
 def rand_int():
     return np.random.randint(0, 2**32)
 
@@ -25,38 +29,135 @@ def random_fn(fn, params, noise_params, key) -> tuple[Any, Array]:
 
     return lambda x: fn(x, perturbed_params), keys[-1]
 
-def get_batch_gradient(fn, x: jax.Array, true_params: list, noise_params: list, key: jax.random.PRNGKey, batch_size: int = 1) -> \
+def get_batch_gradient(fn, x: jax.Array, true_params: list, noise_params: list, key: jax.random.PRNGKey, batch_size: int = 1, gaf_params: dict | None = None) -> \
         tuple[float | Any, Any]:
 
-    grad = None
+    grads = []
 
     for _ in range(batch_size):
         rfn, key = random_fn(fn, true_params, noise_params, key)
 
-        if grad is None:
-            grad = jax.grad(rfn)(x)
-        else:
-            grad += jax.grad(rfn)(x)
+        grads.append(jax.grad(rfn)(x))
 
-    return grad/batch_size, key
+    if gaf_params is not None:
+        grad, key = gradient_agreement_filter(grads, gaf_params, key)
+    else:
+        # If no GAF parameters, just average the gradients
+        grad = sum(grads) / batch_size
 
-def get_batch_value_and_gradient(fn, x: jax.Array, true_params: list, noise_params: list, key: jax.random.PRNGKey, batch_size: int = 1) -> \
-        tuple[float | Any, float | Any, Any]:
+    return grad, key
 
-    value = None
+def pairwise_agreement_filter(grads: list[jax.Array], threshold: float, key: jax.Array) -> tuple[jax.Array | None, jax.Array]:
+    """
+    Filter gradients based on pairwise agreement. Iterates through all potential starting graidents, then
+    checks for pairwise agreement with other gradients, successively averaging gradients that agree. If no agreement
+    is found, another random gradient is selected to start the process again until all potential gradients have been
+    exhausted. If no agreement is found then no gradient is returned.
+
+    Args:
+        grads: list[jax.Array]
+            List of gradients to filter
+        threshold: float
+            Cosine distance threshold for agreement between gradients. Must be between 0 and 2.
+        key: jax.random.PRNGKey
+            Random key for generating random
+
+    Returns:
+        jax.Array | None:
+            Filtered gradient
+        jax.Array:
+            Random key
+    """
+
+    # Check if threshold is valid
+    if threshold < 0 or threshold > 2:
+        raise ValueError("Threshold must be between 0 and 2")
+
     grad = None
 
-    for _ in range(batch_size):
-        rfn, key = random_fn(fn, x, true_params, noise_params, key)
+    starting_grads = set(range(len(grads)))
+    valid_found = False
 
-        if grad is None:
-            value = rfn(x)
-            grad = jax.grad(rfn)(x)
+    good_key = key
+
+    while len(starting_grads) > 0:
+
+        use_key, good_key = jax.random.split(good_key)
+
+        grad_idx = int(jax.random.choice(use_key, jnp.array(list(starting_grads))))
+        grad_candidate = grads[grad_idx]
+        starting_grads.remove(grad_idx)
+
+        # Potential gradients to combine with
+        remaining_grads = set(range(len(grads)))
+        remaining_grads.remove(grad_idx)
+
+        while len(remaining_grads) > 0:
+            # Randomly select another gradient to compare
+            use_key, good_key = jax.random.split(good_key)
+            grad_2_idx = int(jax.random.choice(use_key, jnp.array(list(remaining_grads))))
+
+            # Compute cosine distance
+            cos_sim  = jnp.dot(grad_candidate, grads[grad_2_idx]) / (jnp.linalg.norm(grad_candidate) * jnp.linalg.norm(grads[grad_2_idx]))
+            cos_dist = 1 - cos_sim
+
+            if cos_dist > threshold:
+                remaining_grads.remove(grad_2_idx)
+            else:
+                grad_candidate = (grad_candidate + grads[grad_2_idx]) / 2
+                remaining_grads.remove(grad_2_idx)
+                valid_found = True
+
+        if valid_found:
+            grad = grad_candidate
+            break
+
+    return grad, good_key
+
+
+def gradient_agreement_filter(grads: list[jax.Array], gaf_params: dict, key) -> tuple[jax.Array, Any]:
+    """
+    Filter batch of gradients using a gradient agreement filter (GAF). The GAF method and parameters are specified in
+    the gaf_params dictionary.
+
+    The potential parameters are:
+    - method: str
+        The GAF method to use. Must be one of 'pairwise'
+    - threshold: float
+        The cosine distance threshold for agreement between gradients. Must be between 0 and 2.
+    - key: jax.random.PRNGKey
+        Random key for generating random
+
+    Args:
+        grads: list[jax.Array]
+            List of gradients to filter
+        gaf_params: dict
+            Dictionary containing GAF method and parameters.
+
+    Returns:
+        jax.Array:
+            Filtered gradient
+    """
+
+    grad = None
+
+    if 'method' not in gaf_params:
+        raise ValueError("GAF \"method\" not specified in gaf_params")
+    else:
+        method = gaf_params['method']
+
+    if method == 'pairwise':
+        if 'threshold' not in gaf_params:
+            threshold = jnp.cos(85. * jnp.pi / 180.) # Use 85 degree threshold as default
         else:
-            value += rfn(x)
-            grad += jax.grad(rfn)(x)
+            threshold = gaf_params['threshold']
 
-    return value/batch_size, grad/batch_size, key
+        grad, key = pairwise_agreement_filter(grads, threshold, key)
+
+    else:
+        raise ValueError(f"Method {method} not a supported GAF method. Must be one of {GAF_METHODS}")
+
+    return grad, key
 
 def initial_point(seed: int | None = None, minval = 0., maxval = 1., dims:int = 2) -> jax.Array:
     if dims < 1:
@@ -75,6 +176,7 @@ def optimize_function(fn, p0: jax.Array,
                          learning_rate: float=0.1,
                          batch_size: int=1,
                          solver_params: dict | None = None,
+                         gaf_params: dict | None = None,
                          method: str = 'sgd',
                          seed: int | None = None) -> list[jax.Array]:
 
@@ -102,8 +204,10 @@ def optimize_function(fn, p0: jax.Array,
         solver = optax.lars(**solver_params)
     elif method == 'adagrad':
         solver = optax.adagrad(**solver_params)
-    elif method == 'lbfgs':
-        solver = optax.lbfgs(**solver_params)
+    elif method == 'rmsprop':
+        solver = optax.rmsprop(**solver_params)
+    # elif method == 'lbfgs':
+    #     solver = optax.lbfgs(**solver_params)
     else:
         raise ValueError(f"Method {method} not a supported optimization method. Must be one of {METHODS}")
 
@@ -127,26 +231,23 @@ def optimize_function(fn, p0: jax.Array,
         # Update optimizer state
         if method == 'lbfgs':
             raise NotImplementedError("L-BFGS not yet implemented")
-            value, grad = optax.value_and_grad_from_state(f)(p, state=opt_state)
-            # value, grad, key = get_batch_value_and_gradient(p, true_params, noise_params, key, batch_size=batch_size)
-            updates, opt_state = solver.update(
-                grad, opt_state, p, value=value, grad=grad, value_fn=f_cone
-            )
-        elif method == 'gaf':
-            raise NotImplementedError("GAF not yet implemented")
             # value, grad = optax.value_and_grad_from_state(f)(p, state=opt_state)
             # # value, grad, key = get_batch_value_and_gradient(p, true_params, noise_params, key, batch_size=batch_size)
             # updates, opt_state = solver.update(
             #     grad, opt_state, p, value=value, grad=grad, value_fn=f_cone
             # )
         else:
-            # grad = jax.grad(f)(p)
             # Note we need to pass in the "raw" function here with optional parameter inputs
             # to get new instances of the function with different noise parameters
-            grad, key = get_batch_gradient(fn, p, true_params, noise_params, key, batch_size=batch_size)
-            updates, opt_state = solver.update(grad, opt_state, p)
+            grad, key = get_batch_gradient(fn, p, true_params, noise_params, key, batch_size=batch_size, gaf_params=gaf_params)
 
-        p = optax.apply_updates(p, updates)
+            # If we didn't get a gradient, don't do any updates
+            if grad is not None:
+                updates, opt_state = solver.update(grad, opt_state, p)
+
+        # Only apply updates if we have a step
+        if grad is not None:
+            p = optax.apply_updates(p, updates)
 
         # Save step variables
         grads.append(grad)

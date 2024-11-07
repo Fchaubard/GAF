@@ -5,3 +5,6 @@
 .idea
 .vscode
 .python-version
+
+# Poython files
+__pycache__/*
