@@ -1,0 +1,5 @@
+jax
+plotly
+optax
+optuna
+wandb

@@ -1,0 +1,7 @@
+# Platform Specific Files
+.DS_Store
+
+# IDE Specific Files
+.idea
+.vscode
+.python-version
