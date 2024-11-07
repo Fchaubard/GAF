@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
 import plotly.graph_objects as go
+from pygments.styles.dracula import background
+
 
 def plot_true_function(x: jax.Array, y: jax.Array, fn, n_contours=10, colorscale='Viridis'):
     # Create a meshgrid

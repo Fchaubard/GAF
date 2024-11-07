@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import optax
 from typing import Any
 from jax import Array
-from numpy import ndarray, bool, number
+from numpy import bool
 
 METHODS = ['sgd', 'adam', 'lamb', 'lars', 'adagrad', 'lbfgs', 'gaf']
 
