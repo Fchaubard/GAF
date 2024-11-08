@@ -2,6 +2,7 @@
 
 # You can run with GAF like this:
 # torchrun --nproc_per_node=2 main2.py /path/to/imagenet --use-gaf --cos-distance-thresh 0.97
+# torchrun --master_port=29501 --nproc_per_node=2 main3.py /tempppp/imagenet --use-gaf --cos-distance-thresh 0.97
 
 import argparse
 import os
@@ -24,19 +25,19 @@ import numpy as np
 # Import wandb for logging
 import wandb
 
-import socket
-import subprocess
-import random
-import time
+# import socket
+# import subprocess
+# import random
+# import time
 
-def find_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        s.listen(1)
-        port = s.getsockname()[1]
-    return port
+# def find_free_port():
+#     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+#         s.bind(('', 0))
+#         s.listen(1)
+#         port = s.getsockname()[1]
+#     return port
 
-os.environ["WANDB_API_KEY"] = "cce47709d839921f0b13533529f31c8af7f3f4dc"
+os.environ["WANDB_API_KEY"] = ""
 
 # List of available models in torchvision
 model_names = sorted(
@@ -59,7 +60,7 @@ parser.add_argument('--epochs', default=1000, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=256*8, type=int, metavar='N',
+parser.add_argument('-b', '--batch-size', default=256*4, type=int, metavar='N',
                     help='mini-batch size (default: 256)')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
@@ -107,11 +108,11 @@ def main():
         args.world_size = int(os.environ['WORLD_SIZE'])
         args.gpu = int(os.environ['LOCAL_RANK'])
         
-        # Set a random port if MASTER_PORT is not set
-        if args.rank == 0:  # Only master process sets the port
-            port = random.randint(29500, 29999)  # Choose a random port
-            os.environ['MASTER_PORT'] = str(port)
-            print(f"Using port {port} for distributed training", flush=True)
+        # # Set a random port if MASTER_PORT is not set
+        # if args.rank == 0:  # Only master process sets the port
+        #     port = random.randint(29500, 29999)  # Choose a random port
+        #     os.environ['MASTER_PORT'] = str(port)
+        #     print(f"Using port {port} for distributed training", flush=True)
             
     else:
         print('Not using distributed mode')
