@@ -47,7 +47,52 @@ def get_batch_gradient(fn, x: jax.Array, true_params: list, noise_params: list, 
 
     return grad, key
 
-def pairwise_agreement_filter(grads: list[jax.Array], threshold: float, key: jax.Array) -> tuple[jax.Array | None, jax.Array]:
+def gradient_agreement_filter(grads: list[jax.Array], gaf_params: dict, key) -> tuple[jax.Array, Any]:
+    """
+    Filter batch of gradients using a gradient agreement filter (GAF). The GAF method and parameters are specified in
+    the gaf_params dictionary.
+
+    The potential parameters are:
+    - method: str
+        The GAF method to use. Must be one of 'pairwise'
+    - threshold: float
+        The cosine distance threshold for agreement between gradients. Must be between 0 and 2.
+    - key: jax.random.PRNGKey
+        Random key for generating random
+
+    Args:
+        grads: list[jax.Array]
+            List of gradients to filter
+        gaf_params: dict
+            Dictionary containing GAF method and parameters.
+
+    Returns:
+        jax.Array:
+            Filtered gradient
+    """
+
+    grad = None
+
+    if 'method' not in gaf_params:
+        raise ValueError("GAF \"method\" not specified in gaf_params")
+    else:
+        method = gaf_params['method']
+
+    if method == 'pairwise':
+        grad, key = pairwise_agreement_filter(
+            grads,
+            gaf_params.get('threshold', float(jnp.cos(85. * jnp.pi / 180.))),
+            key,
+            gaf_params.get('multipass', False)
+        )
+
+    else:
+        raise ValueError(f"Method {method} not a supported GAF method. Must be one of {GAF_METHODS}")
+
+    return grad, key
+
+
+def pairwise_agreement_filter(grads: list[jax.Array], threshold: float, key: jax.Array, multipass: bool = False) -> tuple[jax.Array | None, jax.Array]:
     """
     Filter gradients based on pairwise agreement. Iterates through all potential starting graidents, then
     checks for pairwise agreement with other gradients, successively averaging gradients that agree. If no agreement
@@ -112,54 +157,32 @@ def pairwise_agreement_filter(grads: list[jax.Array], threshold: float, key: jax
             grad = grad_candidate
             break
 
+        # If we're not doing multiple passes, break after the first pass, even if we didn't find a valid gradient
+        if not multipass:
+            break
+
     return grad, good_key
 
-
-def gradient_agreement_filter(grads: list[jax.Array], gaf_params: dict, key) -> tuple[jax.Array, Any]:
+def initial_point(seed: int | None = None, minval = 0., maxval = 1., dims:int = 2) -> jax.Array:
     """
-    Filter batch of gradients using a gradient agreement filter (GAF). The GAF method and parameters are specified in
-    the gaf_params dictionary.
-
-    The potential parameters are:
-    - method: str
-        The GAF method to use. Must be one of 'pairwise'
-    - threshold: float
-        The cosine distance threshold for agreement between gradients. Must be between 0 and 2.
-    - key: jax.random.PRNGKey
-        Random key for generating random
+    Generate a random initial point for optimization. The point is generated using a uniform distribution between
+    minval and maxval.
 
     Args:
-        grads: list[jax.Array]
-            List of gradients to filter
-        gaf_params: dict
-            Dictionary containing GAF method and parameters.
+        seed: int | None
+            Random seed for generating the initial point
+        minval:
+
+        maxval:
+            Maximum value for the uniform distribution
+        dims:
+            Number of dimensions for the initial point
 
     Returns:
         jax.Array:
-            Filtered gradient
+            Random initial point
+
     """
-
-    grad = None
-
-    if 'method' not in gaf_params:
-        raise ValueError("GAF \"method\" not specified in gaf_params")
-    else:
-        method = gaf_params['method']
-
-    if method == 'pairwise':
-        if 'threshold' not in gaf_params:
-            threshold = jnp.cos(85. * jnp.pi / 180.) # Use 85 degree threshold as default
-        else:
-            threshold = gaf_params['threshold']
-
-        grad, key = pairwise_agreement_filter(grads, threshold, key)
-
-    else:
-        raise ValueError(f"Method {method} not a supported GAF method. Must be one of {GAF_METHODS}")
-
-    return grad, key
-
-def initial_point(seed: int | None = None, minval = 0., maxval = 1., dims:int = 2) -> jax.Array:
     if dims < 1:
         raise ValueError("Dimensions must be greater than 0")
 
@@ -168,6 +191,41 @@ def initial_point(seed: int | None = None, minval = 0., maxval = 1., dims:int = 
     else:
         key = jax.random.PRNGKey(np.random.randint(0, 2**32))
     return jax.random.uniform(key, (dims,), minval=minval, maxval=maxval)
+
+def initial_point_circle(seed: int | None = None, radius: float = 1., center: jax.Array = jnp.array([0., 0.]), rnoise: float = 0.0) -> jax.Array:
+    """
+    Initialize a point on a circle at with a given radius and center. The point can be optionally perturbed with
+    Gaussian noise.
+
+    Args:
+        seed: int | None
+            Random seed for generating the initial point
+        radius: float
+            Radius of the circle
+        center: jax.Array
+            Center of the circle
+        rnoise: float
+            Standard deviation of Gaussian noise to add to the radius
+
+    Returns:
+        jax.Array:
+            Initial point on the circle
+    """
+
+    if seed is not None:
+        key = jax.random.PRNGKey(seed)
+    else:
+        key = jax.random.PRNGKey(np.random.randint(0, 2**32))
+
+    keys = jax.random.split(key, 2)
+
+    r = radius + jax.random.normal(keys[0], (1,)) * rnoise
+    theta = jax.random.uniform(keys[1], (1,), minval=0., maxval=2*jnp.pi)
+
+    x = float((center[0] + r*jnp.cos(theta))[0])
+    y = float((center[1] + r*jnp.sin(theta))[0])
+
+    return jnp.array([x, y])
 
 def optimize_function(fn, p0: jax.Array,
                          true_params: list,

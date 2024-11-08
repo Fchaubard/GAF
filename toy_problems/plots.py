@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from pygments.styles.dracula import background
 
 
-def plot_true_function(x: jax.Array, y: jax.Array, fn, n_contours=10, colorscale='Viridis'):
+def plot_true_function(x: jax.Array, y: jax.Array, fn, n_contours=10, colorscale='RdBu', showlabels:bool=True) -> go.Figure:
     # Create a meshgrid
     X, Y = jnp.meshgrid(x, y)
 
@@ -21,7 +21,7 @@ def plot_true_function(x: jax.Array, y: jax.Array, fn, n_contours=10, colorscale
             showscale=False,
             line_width=1,
             contours={
-                "showlabels":True,
+                "showlabels":showlabels,
                 "labelfont":{
                     "size":12,
                     "color":'black'
