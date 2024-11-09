@@ -19,7 +19,7 @@ def random_fn(fn, params, noise_params, key) -> tuple[Any, Array]:
     if len(noise_params) != len(params):
         raise ValueError("Noise params must be the same length as params")
 
-    keys = jax.random.split(key, len(noise_params) + 1)
+    keys = jax.random.split(key, len(noise_params))
 
     perturbed_params = []
 
@@ -31,7 +31,7 @@ def random_fn(fn, params, noise_params, key) -> tuple[Any, Array]:
 
 def perturb_gradient(grad, meas_noise_params, key) -> tuple[jax.Array, jax.Array]:
 
-    keys = jax.random.split(key, grad.shape[0] + 1)
+    keys = jax.random.split(key, grad.shape[0])
 
     perturbed_gradient = []
     for i in range(grad.shape[0]):
@@ -43,26 +43,45 @@ def perturb_gradient(grad, meas_noise_params, key) -> tuple[jax.Array, jax.Array
 
     return jnp.array(perturbed_gradient), keys[-1]
 
-def get_batch_gradient(fn, x: jax.Array, true_params: list, noise_params: list, meas_noise_params: list, key: jax.random.PRNGKey, batch_size: int = 1, gaf_params: dict | None = None) -> \
+def get_gradient(fn, x: jax.Array, true_params: list, noise_params: list, meas_noise_params: list, key: jax.random.PRNGKey, batch_size: int = 1, gaf_params: dict | None = None) -> \
         tuple[float | Any, Any]:
+
+    if gaf_params is not None:
+        # Do gradient update with GAF
+
+        grads, key = get_gradient_batch(fn, x, true_params, noise_params, meas_noise_params, key, batch_size)
+        grad, key = gradient_agreement_filter(grads, gaf_params, key)
+
+        retries = gaf_params.get('max_retries_on_failure', 0)
+        if grad is None and retries > 0:
+            # If we didn't get a valid gradient, try again
+            while retries > 0:
+                grads, key = get_gradient_batch(fn, x, true_params, noise_params, meas_noise_params, key, batch_size)
+                grad, key = gradient_agreement_filter(grads, gaf_params, key)
+                retries -= 1
+
+        return grad, key
+    else:
+        # Just do regular gradient update based on mini-batch
+        grads, key = get_gradient_batch(fn, x, true_params, noise_params, meas_noise_params, key, batch_size)
+
+        return sum(grads) / len(grads), key
+
+def get_gradient_batch(fn, x: jax.Array, true_params: list, noise_params: list, meas_noise_params: list, key: jax.random.PRNGKey, batch_size: int = 1) -> \
+        tuple[list[jax.Array], jax.random.PRNGKey]:
 
     grads = []
 
-    for _ in range(batch_size):
-        rfn, key = random_fn(fn, true_params, noise_params, key)
+    keys = jax.random.split(key, batch_size + 1)
+
+    for i in range(batch_size):
+        rfn, key = random_fn(fn, true_params, noise_params, keys[i])
 
         grad, key = perturb_gradient(jax.grad(rfn)(x), meas_noise_params, key)
 
         grads.append(grad)
 
-    if gaf_params is not None:
-        grad, key = gradient_agreement_filter(grads, gaf_params, key)
-    else:
-        # If no GAF parameters, just average the gradients
-        grad = sum(grads) / batch_size
-
-    return grad, key
-
+    return grads, keys[-1]
 def gradient_agreement_filter(grads: list[jax.Array], gaf_params: dict, key) -> tuple[jax.Array, Any]:
     """
     Filter batch of gradients using a gradient agreement filter (GAF). The GAF method and parameters are specified in
@@ -71,7 +90,7 @@ def gradient_agreement_filter(grads: list[jax.Array], gaf_params: dict, key) -> 
     The potential parameters are:
     - method: str
         The GAF method to use. Must be one of 'pairwise'
-    - threshold: float
+    - cos_dist_max: float
         The cosine distance threshold for agreement between gradients. Must be between 0 and 2.
     - key: jax.random.PRNGKey
         Random key for generating random
@@ -97,9 +116,9 @@ def gradient_agreement_filter(grads: list[jax.Array], gaf_params: dict, key) -> 
     if method == 'pairwise':
         grad, key = pairwise_agreement_filter(
             grads,
-            gaf_params.get('threshold', float(jnp.cos(85. * jnp.pi / 180.))),
+            gaf_params.get('cos_dist_max', float(jnp.cos(87.7 * jnp.pi / 180.))),
             key,
-            gaf_params.get('multipass', False)
+            gaf_params.get('pairwise_multipass', False)
         )
 
     else:
@@ -308,7 +327,7 @@ def optimize_function(fn, p0: jax.Array,
         else:
             # Note we need to pass in the "raw" function here with optional parameter inputs
             # to get new instances of the function with different noise parameters
-            grad, key = get_batch_gradient(fn, p, true_params, perturbation_params, meas_noise_params, key, batch_size=batch_size, gaf_params=gaf_params)
+            grad, key = get_gradient(fn, p, true_params, perturbation_params, meas_noise_params, key, batch_size=batch_size, gaf_params=gaf_params)
 
             # If we didn't get a gradient, don't do any updates
             if grad is not None:
