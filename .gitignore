@@ -11,3 +11,4 @@
 
 # Wandb
 wandb
+*.db
