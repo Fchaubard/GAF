@@ -6,5 +6,8 @@
 .vscode
 .python-version
 
-# Poython files
+# Python files
 *__pycache__/*
+
+# Wandb
+wandb

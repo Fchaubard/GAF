@@ -271,3 +271,25 @@ def wheelers_ridge_function(x, params):
 
     return -jnp.exp(-(x1*x2 - a)**2 - (x2 - a)**2)
 
+def get_function_by_name(name: str) -> callable:
+    """
+    Get a function by its name
+
+    Args:
+        name: str
+            Name of the function to retrieve
+
+    Returns:
+        callable:
+            Function corresponding to the name
+    """
+
+    # Get all functions that follow patterm of *_function
+    functions = [f for f in globals() if f.endswith("_function")]
+
+    # Get the function that matches the name
+    for function in functions:
+        if name == function[:-9]:
+            return globals()[function]
+    else:
+        raise ValueError(f"Unknown function name: {name}. Available functions are: {[f.removesuffix('_function') for f in functions]}")

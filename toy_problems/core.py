@@ -7,7 +7,7 @@ import optax
 from typing import Any, Tuple
 from jax import Array
 
-METHODS = ['sgd', 'adam', 'lamb', 'lars', 'adagrad', 'rmsprop']
+METHODS = ['adadelta', 'adan',  'adagrad', 'adam', 'adamax', 'adafactor', 'sgd', 'yogi'] # 'rmsprop', 'lamb', 'lars', 'lbfgs']
 
 GAF_METHODS = ['pairwise']
 
@@ -29,7 +29,21 @@ def random_fn(fn, params, noise_params, key) -> tuple[Any, Array]:
 
     return lambda x: fn(x, perturbed_params), keys[-1]
 
-def get_batch_gradient(fn, x: jax.Array, true_params: list, noise_params: list, key: jax.random.PRNGKey, batch_size: int = 1, gaf_params: dict | None = None) -> \
+def perturb_gradient(grad, meas_noise_params, key) -> tuple[jax.Array, jax.Array]:
+
+    keys = jax.random.split(key, grad.shape[0] + 1)
+
+    perturbed_gradient = []
+    for i in range(grad.shape[0]):
+        # Compute magnitude of gradident component
+        grad_i_mag = jnp.linalg.norm(grad[i])
+
+        perturbed_gradient.append(grad[i] + float((jax.random.normal(keys[i], (1,)) * (meas_noise_params[1] / 100.) * grad_i_mag + meas_noise_params[0])[0]))
+
+
+    return jnp.array(perturbed_gradient), keys[-1]
+
+def get_batch_gradient(fn, x: jax.Array, true_params: list, noise_params: list, meas_noise_params: list, key: jax.random.PRNGKey, batch_size: int = 1, gaf_params: dict | None = None) -> \
         tuple[float | Any, Any]:
 
     grads = []
@@ -37,7 +51,9 @@ def get_batch_gradient(fn, x: jax.Array, true_params: list, noise_params: list, 
     for _ in range(batch_size):
         rfn, key = random_fn(fn, true_params, noise_params, key)
 
-        grads.append(jax.grad(rfn)(x))
+        grad, key = perturb_gradient(jax.grad(rfn)(x), meas_noise_params, key)
+
+        grads.append(grad)
 
     if gaf_params is not None:
         grad, key = gradient_agreement_filter(grads, gaf_params, key)
@@ -229,7 +245,8 @@ def initial_point_circle(seed: int | None = None, radius: float = 1., center: ja
 
 def optimize_function(fn, p0: jax.Array,
                          true_params: list,
-                         noise_params: list,
+                         perturbation_params: list,
+                         meas_noise_params=None,
                          steps: int=10,
                          learning_rate: float=0.1,
                          batch_size: int=1,
@@ -238,8 +255,14 @@ def optimize_function(fn, p0: jax.Array,
                          method: str = 'sgd',
                          seed: int | None = None) -> list[jax.Array]:
 
-    if len(noise_params) != len(true_params):
+    if len(perturbation_params) != len(true_params):
         raise ValueError("Noise params must be the same length as true params")
+
+    if meas_noise_params is None:
+        meas_noise_params = [0., 0.]
+
+    if len(meas_noise_params) != 2:
+        raise ValueError("Measurement noise params must be length 2")
 
     # If solver_params is None, set to empty dictionary
     if solver_params is None:
@@ -252,20 +275,8 @@ def optimize_function(fn, p0: jax.Array,
     f = lambda x: fn(x, true_params)
 
     # Create solver
-    if method == 'sgd':
+    if method in METHODS:
         solver = optax.sgd(**solver_params)
-    elif method == 'adam':
-        solver = optax.adam(**solver_params)
-    elif method == 'lamb':
-        solver = optax.lamb(**solver_params)
-    elif method == 'lars':
-        solver = optax.lars(**solver_params)
-    elif method == 'adagrad':
-        solver = optax.adagrad(**solver_params)
-    elif method == 'rmsprop':
-        solver = optax.rmsprop(**solver_params)
-    # elif method == 'lbfgs':
-    #     solver = optax.lbfgs(**solver_params)
     else:
         raise ValueError(f"Method {method} not a supported optimization method. Must be one of {METHODS}")
 
@@ -290,14 +301,14 @@ def optimize_function(fn, p0: jax.Array,
         if method == 'lbfgs':
             raise NotImplementedError("L-BFGS not yet implemented")
             # value, grad = optax.value_and_grad_from_state(f)(p, state=opt_state)
-            # # value, grad, key = get_batch_value_and_gradient(p, true_params, noise_params, key, batch_size=batch_size)
+            # # value, grad, key = get_batch_value_and_gradient(p, true_params, perturbation_params, key, batch_size=batch_size)
             # updates, opt_state = solver.update(
             #     grad, opt_state, p, value=value, grad=grad, value_fn=f_cone
             # )
         else:
             # Note we need to pass in the "raw" function here with optional parameter inputs
             # to get new instances of the function with different noise parameters
-            grad, key = get_batch_gradient(fn, p, true_params, noise_params, key, batch_size=batch_size, gaf_params=gaf_params)
+            grad, key = get_batch_gradient(fn, p, true_params, perturbation_params, meas_noise_params, key, batch_size=batch_size, gaf_params=gaf_params)
 
             # If we didn't get a gradient, don't do any updates
             if grad is not None:

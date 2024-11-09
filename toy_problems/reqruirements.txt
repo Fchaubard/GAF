@@ -2,4 +2,5 @@ jax
 plotly
 optax
 optuna
+optuna-integration[wandb]
 wandb
