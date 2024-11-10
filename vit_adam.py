@@ -1,6 +1,8 @@
 # This code implements ImageNet training with GAF (Gradient Agreement Filtering)
-
-# torchrun --master_port=29502 --nproc_per_node=2 vit_adam.py /tempppp/imagenet --use-gaf --cos-distance-thresh 1  --arch vit_large_patch16_224 --pretrained --lr_warmup 100
+# torchrun --nproc_per_node=2 main3.py /path/to/imagenet --use-gaf --cos-distance-thresh 0.97 --arch vit_large_patch16_224
+#torchrun --nproc_per_node=2 main3.py /path/to/imagenet --use-gaf --cos-distance-thresh 0.97
+# torchrun --master_port=29502 --nproc_per_node=2 vit.py /tempppp/imagenet --use-gaf --cos-distance-thresh 2  --arch vit_large_patch16_224
+# torchrun --master_port=29502 --nproc_per_node=2 vit.py --dummy --use-gaf --cos-distance-thresh 2  --arch vit_large_patch16_224
 
 import argparse
 import os
@@ -28,7 +30,7 @@ import timm
 import wandb
 
 
-os.environ["WANDB_API_KEY"] = ""
+os.environ["WANDB_API_KEY"] = "cce47709d839921f0b13533529f31c8af7f3f4dc"
 
 # List of available models
 model_names = ['vit_large_patch16_224'] + sorted(
@@ -238,12 +240,72 @@ def main_worker(gpu, args):
         def get_sampler_seed(epoch):
             return args.seed + epoch * 100 if args.seed is not None else None
         
-        train_sampler = torch.utils.data.distributed.DistributedSampler(
+        # train_sampler = torch.utils.data.distributed.DistributedSampler(
+        #     train_dataset,
+        #     num_replicas=dist.get_world_size(),
+        #     rank=dist.get_rank(),
+        #     shuffle=True,
+        #     seed=get_sampler_seed(0)
+        # )
+        class DistributedBalancedSampler(torch.utils.data.Sampler):
+            """
+            Sampler that randomly selects batch_size classes each iteration,
+            and ensures each GPU gets a different sample from those same classes.
+            """
+            def __init__(self, dataset, num_replicas, rank, batch_size=380, seed=0):
+                self.dataset = dataset
+                self.num_replicas = num_replicas
+                self.rank = rank
+                self.epoch = 0
+                self.seed = seed
+                self.batch_size = batch_size
+                
+                # Get labels for all samples
+                self.labels = np.array([label for _, label in self.dataset.samples])
+                self.num_classes = len(dataset.classes)  # 1000 for ImageNet
+                
+                # Create indices for each class
+                self.class_indices = [np.where(self.labels == i)[0] for i in range(self.num_classes)]
+                
+                # Calculate samples per epoch (making this large enough to ensure good coverage)
+                self.iters_per_epoch = len(dataset) // (batch_size * num_replicas)
+                self.num_samples = self.iters_per_epoch * batch_size
+                
+            def __iter__(self):
+                # Create epoch-specific generator
+                g = torch.Generator()
+                g.manual_seed(self.seed + self.epoch)
+                
+                indices = []
+                for _ in range(self.iters_per_epoch):
+                    # Randomly select batch_size classes for this iteration
+                    selected_classes = torch.randperm(self.num_classes, generator=g)[:self.batch_size]
+                    
+                    # For each selected class, choose a sample based on rank
+                    for class_idx in selected_classes:
+                        class_indices = self.class_indices[class_idx.item()]
+                        # Use rank to select different samples for each GPU
+                        # Add generator offset to ensure different samples across iterations
+                        perm = torch.randperm(len(class_indices), generator=g)
+                        # Each rank gets a different sample from the same class
+                        sample_idx = perm[self.rank % len(perm)]
+                        indices.append(class_indices[sample_idx])
+                
+                return iter(indices)
+        
+            def __len__(self):
+                return self.num_samples
+        
+            def set_epoch(self, epoch):
+                """Sets the epoch for this sampler."""
+                self.epoch = epoch
+        
+        # Usage:
+        train_sampler = DistributedBalancedSampler(
             train_dataset,
             num_replicas=dist.get_world_size(),
             rank=dist.get_rank(),
-            shuffle=True,
-            seed=get_sampler_seed(0)
+            batch_size=args.batch_size
         )
         
         val_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -256,12 +318,20 @@ def main_worker(gpu, args):
         train_sampler = None
         val_sampler = None
 
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_dataset, batch_size=args.batch_size,
+    #     shuffle=(train_sampler is None),
+    #     num_workers=args.workers, pin_memory=True,
+    #     sampler=train_sampler)
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size,
-        shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True,
-        sampler=train_sampler)
-
+        train_dataset, 
+        batch_size=args.batch_size,  # Set to your maximum batch size
+        shuffle=False,
+        num_workers=args.workers, 
+        pin_memory=True,
+        sampler=train_sampler
+    )
+    
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.batch_size,
         shuffle=False, num_workers=args.workers,
@@ -360,10 +430,15 @@ def train(train_loader, model, criterion, optimizer, scheduler, scaler, epoch, a
     param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
     local_grad_buffer = torch.zeros(param_count, device=device)
     grad_list_buffer = [torch.zeros(param_count, device=device) for _ in range(args.world_size)]
-
+    print("len(train_loader)",len(train_loader))
+    train_iter = iter(train_loader)
+    
     for i, (images, target) in enumerate(train_loader):
-        if i >= iters_till_val:
-            break
+        # if i >= iters_till_val:
+        #     break
+    # for i in range(iters_till_val):
+        # images, target = next(train_iter)
+        
         max_cos_distance = 0
         data_time.update(time.time() - end)
         
