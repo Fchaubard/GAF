@@ -1,0 +1,1 @@
+{"value": 0.6037132740020752, "params": {"steps": 89, "learning_rate": 0.16763038034480962, "batch_size": 3}, "best_trial": 199, "study_name": "TFOpt Params - Function: ackleys, Algorithm: sgd"}

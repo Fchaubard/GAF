@@ -42,13 +42,13 @@ def objective(trial, alg, problem):
     # Set common parameters
     solver_steps = trial.suggest_int('steps', 10, 100, log=True)
     solver_params = {
-        'learning_rate': trial.suggest_float('learning_rate', 1e-4, 10, log=True),
+        'learning_rate': trial.suggest_float('learning_rate', 1e-4, 1, log=True),
     }
     batch_size = trial.suggest_int('batch_size', 1, 50)
 
     # Initialize wandb for this trial
     wandb.init(
-        project=f"Optimal Hyperparameters - {problem.upper()} - {alg}",
+        project=f"Optimal Hyperparameters - {problem} - {alg}",
         config=trial.params,
         reinit=True,
         name=f"{alg}_{problem}_{trial.number}",
@@ -66,7 +66,7 @@ def objective(trial, alg, problem):
         'noise_free': True,
     })
 
-    N_trials = 25  # Number of internal trials per hyperparameter set
+    N_trials = 10  # Number of internal trials per hyperparameter set
     objective_values = []
 
     # Get Optimization Function
@@ -74,6 +74,7 @@ def objective(trial, alg, problem):
 
     seeds = []
     initial_points = []
+    x_opts = []
 
     for _ in range(N_trials):
         # Get Random point
@@ -98,6 +99,7 @@ def objective(trial, alg, problem):
         objective_values.append(objective)
         seeds.append(seed)
         initial_points.append(pi)
+        x_opts.append(path[-1])
 
         wandb.log({'objective_value': objective_values[-1]})
 
@@ -105,7 +107,15 @@ def objective(trial, alg, problem):
     mean_obj_value = np.mean(objective_values)
 
     # Log metrics to wandb
-    wandb.log({'mean_objective_value': mean_obj_value, 'seeds': seeds, 'pi_x': [float(x[0]) for x in initial_points], 'pi_y': [float(x[1]) for x in initial_points]})
+    wandb.log(
+        {'mean_objective_value': mean_obj_value,
+         'seeds': seeds,
+         'pi_x': [float(x[0]) for x in initial_points],
+         'pi_y': [float(x[1]) for x in initial_points],
+         'x_opt': [float(x[0]) for x in x_opts],
+         'y_opt': [float(x[1]) for x in x_opts]
+         }
+    )
 
     # Finish the wandb run
     wandb.finish()
@@ -114,10 +124,14 @@ def objective(trial, alg, problem):
     return mean_obj_value
 
 
-def run_study(alg, problem):
+def run_study():
+    # problem = 'ackleys' # 'cone'
+    problem = 'cone'  # 'ackleys'
+    alg = 'sgd' # 'adam':
 
     study = optuna.create_study(
-        study_name=f'TFOpt Params - Function: {problem.upper()}, Algorithm: {alg}',
+        study_name=f'TFOpt Params - Function: {problem}, Algorithm: {alg}',
+        # study_name=f'Test Parallel',
         direction="minimize",
         storage=f"sqlite:///gaf_tfn_hyperparams.db?timeout=10.0",
         load_if_exists=True
@@ -136,18 +150,21 @@ def run_study(alg, problem):
     for key, value in trial.params.items():
         print("    {}: {}".format(key, value))
 
+    json.dump({
+        'value': trial.value,
+        'params': trial.params,
+        'best_trial': trial.number,
+        'study_name': study.study_name
+    }, open(f'{PROJECT_NAME}_best_params.json', 'w'))
+
 if __name__ == '__main__':
+    n_workers = multiprocessing.cpu_count()
+    processes = []
 
-    for problem in ['cone', 'ackleys']:
-        for alg in ['sgd', 'adam']:
+    for _ in range(n_workers):
+        p = multiprocessing.Process(target=run_study)
+        p.start()
+        processes.append(p)
 
-            n_workers = multiprocessing.cpu_count()
-            processes = []
-
-            for _ in range(n_workers):
-                p = multiprocessing.Process(target=lambda: run_study(alg, problem))
-                p.start()
-                processes.append(p)
-
-            for p in processes:
-                p.join()
+    for p in processes:
+        p.join()
