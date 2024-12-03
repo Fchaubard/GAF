@@ -1,23 +1,62 @@
 # Gradient Agreement Filtering (GAF)
 
-This package implements the Gradient Agreement Filtering (GAF) optimization
-algorithm. GAF is a novel optimization algorithm that improves gradient-based
-optimization by filtering out gradients of data batches that do not agree with
-each other.
+This package implements the Gradient Agreement Filtering (GAF) optimization algorithm. 
+
+GAF is a novel optimization algorithm that improves gradient-based optimization by filtering out gradients of data batches that do not agree with each other and nearly eliminates the need for a validation set without risk of overfitting (even with noisy labels). It bolts on top of existing optimization procedures such as SGD, SGD with Nesterov momentum, Adam, AdamW, RMSProp, etc and outperforms in all cases. Full paper here:
+```
+TODO: Insert arxiv paper link
+```
+
+## Repo Features
+
+- Supports multiple optimizers: SGD, SGD with Nesterov momentum, Adam, AdamW, RMSProp.
+- Implements Gradient Agreement Filtering based on cosine distance. 
+- Allows for label noise injection by flipping a percentage of labels.
+- Customizable hyperparameters via command-line arguments.
+- Logging and tracking with Weights & Biases (wandb).
+
+# Gradient Agreement Filtering (GAF) with ResNet18 on CIFAR-100
+
+This repository provides an implementation of **Gradient Agreement Filtering (GAF)** applied to training a ResNet18 model on the CIFAR-100 dataset using PyTorch. The code supports various optimizers and configurations, allowing you to experiment with different settings to understand the impact of GAF on model training.
+
+# Gradient Agreement Filtering (GAF) with ResNet34 on CIFAR-100N-Fine
+```
+TODO: Insert arxiv paper
+```
+
+# Gradient Agreement Filtering (GAF) with ViT on ImageNet
+```
+TODO: Insert arxiv paper
+```
+
+# Gradient Agreement Filtering (GAF) with Pythia on GSM8k
+```
+TODO: Insert arxiv paper
+```
+
+
+# Gradient Agreement Filtering (GAF) with Pythia on GSM8k
+```
+TODO: Insert arxiv paper
+```
+
+
+## Requirements
+
+- Python 3.6 or higher
+- PyTorch 1.7 or higher
+- torchvision 0.8 or higher
+- numpy
+- wandb
 
 ## Installation
 
-### Toy Problems
+1. **Clone the repository:**
 
-We include a number of toy optimization problems in the `toy_problems` directory that
-demonstrate GAF in practice. To run these problems, you will need to install the
-requirements in the `requirements.txt` file in the `toy_problems` directory with
+   ```bash
+   git clone https://github.com/your_username/gaf-cifar100.git
+   cd gaf-cifar100
 
-```bash
-pip install -r toy_problems/requirements.txt
-```
-
-Then you can run any of the notebooks or scripts the folder.
 
 ## Acknowledgement
 
@@ -27,6 +66,15 @@ To cite this work, please use the following BibTeX entry:
 TODO
 ```
 
+# Citing GAF
+```
+Insert bibtex
+```
+
+# License
+```
+TODO
+```
 ## License
 
 This package is licensed under the MIT license. See [LICENSE](LICENSE) for details.
