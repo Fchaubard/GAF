@@ -411,11 +411,6 @@ if config['label_error_percentage'] and config['label_error_percentage'] > 0:
     else:
         raise ValueError(f"label_error_percentage needs to be between 0 and 1. Given label_error_percentage={config['label_error_percentage']}")
 
-# Estimate L at the beginning of training
-print("Estimating Lipschitz constant L...")
-sample_batch = sample_iid_mbs(train_dataset, class_indices, config['batch_size'])
-L_estimate = estimate_L(model, criterion, device, sample_batch)
-print(f"Estimated L: {L_estimate}")
 
 # Training loop
 for epoch in range(config['epochs']):
@@ -424,6 +419,13 @@ for epoch in range(config['epochs']):
     correct_top1 = 0
     total = 0
     iteration = 0
+    if iteration % 100 == 0:
+        # update the L_estimate as the \thetas have changed, thus the L_estimate will change as well. 
+        # Estimate L at the beginning of training
+        print("Estimating Lipschitz constant L...")   
+        sample_batch = sample_iid_mbs(train_dataset, class_indices, config['batch_size'])
+        L_estimate = estimate_L(model, criterion, device, sample_batch)
+        print(f"Estimated L: {L_estimate}")
 
     # Calculate total iterations per epoch
     if config['GAF']:
