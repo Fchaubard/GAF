@@ -12,7 +12,7 @@ import argparse
 
 # Make the script callable from the CLI and parse arguments
 
-os.environ["WANDB_API_KEY"] = "cce47709d839921f0b13533529f31c8af7f3f4dc"
+os.environ["WANDB_API_KEY"] = ""
 
 
 # List of optimizer types
